@@ -1,0 +1,10 @@
+[package]
+name = "linux"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared = { path = "../shared" }
+arboard = { version = "3", features = ["wayland-data-control"] }
+serde = { workspace = true }
+bincode = { workspace = true }

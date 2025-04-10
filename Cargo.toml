@@ -1,0 +1,16 @@
+[workspace]
+members = ["linux", "macos", "shared"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["cursedboard"]
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1"
+toml = "0.9"
+regex = "1.10"
+dirs = "6"
+
