@@ -1,0 +1,3 @@
+# Cursedboard
+
+This is supercursed.
