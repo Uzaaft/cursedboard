@@ -36,5 +36,5 @@ fn main() -> Result<(), error::AppError > {
         let text = unsafe { cp.stringForType(NSPasteboardTypeString) };
         println!("Changecount: {changecount}, Contents: {text:?}");
     }
-    Ok(())
+
 }
