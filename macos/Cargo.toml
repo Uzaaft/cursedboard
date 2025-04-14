@@ -5,5 +5,7 @@ edition = "2024"
 
 [dependencies]
 objc2 = "0.6.0"
-objc2-app-kit = "0.3.0"
-tokio = { version = "1", features = ["macros", "rt", "time"] }
+objc2-app-kit = { version = "0.3.0", default-features = false, features = [
+  "NSPasteboard",
+  "NSPasteboardItem",
+] }
