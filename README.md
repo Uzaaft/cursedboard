@@ -2,6 +2,10 @@
 
 This is supercursed.
 
+## Goal:
+
+Sync the clipboard actions on the mac side with the content getting copied in the linux side, and the other way.
+
 ## Underlying assumptions:
 
 1. We will always use port 34254
