@@ -1,47 +1,62 @@
 {
-  description = "An empty project that uses Zig.";
-
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-23.05";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable"; # We want to use packages from the binary cache
     flake-utils.url = "github:numtide/flake-utils";
+    # Rust overlay
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    # Zig overlay
     zig.url = "github:mitchellh/zig-overlay";
-
-    # Used for shell.nix
-    flake-compat = {
-      url = "github:edolstra/flake-compat";
-      flake = false;
-    };
   };
 
-  outputs = {
+  outputs = inputs @ {
     self,
     nixpkgs,
     flake-utils,
+    rust-overlay,
     zig,
     ...
-  } @ inputs: let
-    overlays = [
-      # Other overlays
-      (final: prev: {
-        zigpkgs = inputs.zig.packages.${prev.system};
-      })
-    ];
+  }:
+    flake-utils.lib.eachSystem [
+      "x86_64-linux"
+      "aarch64-linux"
+      "aarch64-darwin"
+    ] (system: let
+      overlays = [(import rust-overlay)];
+      pkgs = import nixpkgs {
+        inherit system overlays;
+      };
+      rustVersion = pkgs.rust-bin.fromRustupToolchainFile ./macos/rust-toolchain.toml;
+      rustPlatform = pkgs.makeRustPlatform {
+        cargo = rustVersion;
+        rustc = rustVersion;
+      };
+      appRustBuild = rustPlatform.buildRustPackage {
+        pname = "macos";
+        version = "0.1.0";
+        src = ./macos;
+        cargoLock.lockFile = ./macos/Cargo.lock;
+      };
+    in {
+      # For `nix build` & `nix run`:
+      packages = {
+        macos = appRustBuild;
 
-    # Our supported systems are the same supported systems as the Zig binaries
-    systems = builtins.attrNames inputs.zig.packages;
-  in
-    flake-utils.lib.eachSystem systems (
-      system: let
-        pkgs = import nixpkgs {inherit overlays system;};
-      in rec {
-        devShells.default = pkgs.mkShell {
-          nativeBuildInputs = [
-            zig.packages.${system}."0.14.0"
-          ];
-        };
+        # default = appRustBuild;
 
-        # For compatibility with older versions of the `nix` binary
-        devShell = self.devShells.${system}.default;
-      }
-    );
+        inherit (pkgs) rust-toolchain;
+      };
+
+      devShell = pkgs.mkShell {
+        packages = [
+          zig.packages.${system}."0.14.0"
+          pkgs.rust-bin.stable.latest.default
+          pkgs.zls
+        ];
+
+        buildInputs = with pkgs; [
+          rust-bin.stable.latest.default
+          zig.packages.${system}."0.14.0"
+        ];
+      };
+    });
 }
