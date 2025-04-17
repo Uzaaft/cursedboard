@@ -1,46 +1,51 @@
-//! By convention, main.zig is where your main function lives in the case that
-//! you are building an executable. If you are making a library, the convention
-//! is to delete this file and start with root.zig instead.
+const std = @import("std");
+const net = std.net;
+const posix = std.posix;
 
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    const address = try std.net.Address.parseIp("0.0.0.0", 34254);
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+    const tpe: u32 = posix.SOCK.STREAM;
+    const protocol = posix.IPPROTO.TCP;
+    const listener = try posix.socket(address.any.family, tpe, protocol);
+    defer posix.close(listener);
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+    try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+    try posix.bind(listener, &address.any, address.getOsSockLen());
+    try posix.listen(listener, 128);
+    var buf: [1024]u8 = undefined;
+    var client_address: net.Address = undefined;
+    var client_address_len: posix.socklen_t = @sizeOf(net.Address);
 
-    try bw.flush(); // Don't forget to flush!
-}
+    const socket = try posix.accept(listener, &client_address.any, &client_address_len, 0);
+    defer posix.close(socket);
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
+    std.debug.print("{} connected\n", .{client_address});
+    while (true) {
 
-test "use other module" {
-    try std.testing.expectEqual(@as(i32, 150), lib.add(100, 50));
-}
+        const read = posix.read(socket, &buf) catch |err| {
+            std.debug.print("error reading: {}\n", .{err});
+            continue;
+        };
+        std.debug.print("{s}", .{buf});
+        // Clear buffer
+        // For now we are just printing this out. The goal is to pass the contents of the buffer to wayland clipboard
+        buf = undefined;
 
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
+        if (read == 0) {
+            continue;
         }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+
+    }
 }
 
-const std = @import("std");
-
-/// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
-const lib = @import("linux_lib");
+fn write(socket: posix.socket_t, msg: []const u8) !void {
+    var pos: usize = 0;
+    while (pos < msg.len) {
+        const written = try posix.write(socket, msg[pos..]);
+        if (written == 0) {
+            return error.Closed;
+        }
+        pos += written;
+    }
+}
