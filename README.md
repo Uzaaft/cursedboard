@@ -11,6 +11,7 @@ Sync the clipboard actions on the mac side with the content getting copied in th
 1. We will always use port 34254
 2. TCP
 3. Zero encryption
+4. We will prefix the length of the incoming message with a 8-byte unsigned integer.
 
 ## Architecture
 

@@ -27,7 +27,7 @@ impl Deref for Clipboard{
 }
 
 fn main() -> Result<(), error::AppError > {
-    let mut stream = TcpStream::connect("dev.bobr:34254")?;
+    let mut stream = TcpStream::connect("172.16.104.129:34254")?;
 
     let cp = Clipboard::default();
     let default_interval = Duration::from_millis(500); // TODO: Config value
@@ -41,7 +41,11 @@ fn main() -> Result<(), error::AppError > {
         }
         let text = unsafe { cp.stringForType(NSPasteboardTypeString) };
         if let Some(s) = &text {
-            stream.write_all(&s.to_string().into_bytes())?;
+            let buffer: Vec<u8> = s.to_string().into_bytes();
+            let buffer_len: u64 = buffer.len().try_into()?;
+            println!("Buffer length: {}", buffer_len);
+            stream.write(&buffer_len.to_be_bytes())?;
+            // stream.write_all(&buffer)?;
         }
 
         prev_count = changecount;
