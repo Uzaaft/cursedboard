@@ -1,12 +1,12 @@
 mod config;
 mod error;
 
-use std::{io::{Read, Write}, net::TcpStream, sync::{Arc, Mutex, mpsc}, thread, time::Duration};
+use std::{net::TcpStream, sync::{Arc, Mutex, mpsc}, thread, time::Duration};
 
 use objc2::rc::{Retained, autoreleasepool};
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 use objc2_foundation::NSString;
-use shared::{ClipboardMessage, decode_message_length, encode_message, config::Config};
+use shared::{ClipboardMessage, config::Config, network::{NetworkManager, handle_incoming_messages, send_clipboard_message}};
 
 /// Wrapper around apple Pasteboard
 struct Clipboard(Retained<NSPasteboard>);
@@ -20,7 +20,6 @@ impl Default for Clipboard {
 
 enum ClipboardCommand {
     SetText(String),
-    GetChange,
 }
 
 struct ClipboardState {
@@ -28,74 +27,8 @@ struct ClipboardState {
     content: Option<String>,
 }
 
-fn handle_incoming_messages(mut stream: TcpStream, clipboard_tx: mpsc::Sender<ClipboardCommand>) {
-    let mut message_length = [0u8; 8];
-    
-    loop {
-        match stream.read_exact(&mut message_length) {
-            Ok(_) => {
-                let length = decode_message_length(&message_length) as usize;
-                let mut buffer = vec![0u8; length];
-                
-                match stream.read_exact(&mut buffer) {
-                    Ok(_) => {
-                        match ClipboardMessage::from_bytes(&buffer) {
-                            Ok(msg) => {
-                                println!("Received clipboard content: {} bytes", msg.content.len());
-                                if let Err(e) = clipboard_tx.send(ClipboardCommand::SetText(msg.content)) {
-                                    eprintln!("Failed to send clipboard command: {}", e);
-                                    break;
-                                }
-                            }
-                            Err(e) => eprintln!("Failed to decode message: {}", e),
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to read message data: {}", e);
-                        break;
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to read message length: {}", e);
-                break;
-            }
-        }
-    }
-}
-
-fn monitor_clipboard(stream: Arc<Mutex<TcpStream>>, clipboard_rx: mpsc::Receiver<ClipboardState>) {
-    let mut prev_count = 0;
-    
-    loop {
-        match clipboard_rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(state) => {
-                if state.changecount != prev_count {
-                    if let Some(content) = state.content {
-                        let msg = ClipboardMessage::new(content);
-                        
-                        match encode_message(&msg) {
-                            Ok(data) => {
-                                if let Ok(mut stream) = stream.lock() {
-                                    if let Err(e) = stream.write_all(&data) {
-                                        eprintln!("Failed to send clipboard: {}", e);
-                                    } else {
-                                        println!("Sent clipboard content: {} bytes", msg.content.len());
-                                    }
-                                }
-                            }
-                            Err(e) => eprintln!("Failed to encode message: {}", e),
-                        }
-                    }
-                    
-                    prev_count = state.changecount;
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-}
+/// Global connections map for broadcasting clipboard changes
+type ConnectionsMap = Arc<Mutex<Vec<Arc<Mutex<TcpStream>>>>>;
 
 fn clipboard_manager(clipboard_tx: mpsc::Receiver<ClipboardCommand>, state_tx: mpsc::Sender<ClipboardState>) {
     let clipboard = Clipboard::default();
@@ -112,9 +45,8 @@ fn clipboard_manager(clipboard_tx: mpsc::Receiver<ClipboardCommand>, state_tx: m
                         clipboard.0.setString_forType(&ns_string, NSPasteboardTypeString);
                     }
                 });
-            }
-            Ok(ClipboardCommand::GetChange) => {
-                // This is handled below
+                // Update our count to avoid re-sending this change
+                prev_count = unsafe { clipboard.0.changeCount() };
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => break,
@@ -144,58 +76,117 @@ fn clipboard_manager(clipboard_tx: mpsc::Receiver<ClipboardCommand>, state_tx: m
     }
 }
 
-fn main() -> Result<(), error::AppError> {
-    // Load configuration with layered approach (files + env vars)
-    let config = Config::load_layered()
-        .or_else(|_| Config::from_env()) // Fallback to env-only for backward compatibility
-        .map_err(|e| error::AppError::ConfigError(e.to_string()))?;
+fn monitor_clipboard_changes(state_rx: mpsc::Receiver<ClipboardState>, connections: ConnectionsMap) {
+    let mut prev_count = 0;
     
-    let peer_addrs = config.peer_addrs();
+    loop {
+        match state_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(state) => {
+                if state.changecount != prev_count {
+                    if let Some(content) = state.content {
+                        let msg = ClipboardMessage::new(content);
+                        
+                        // Broadcast to all connected peers
+                        let conns = connections.lock().unwrap();
+                        for stream in conns.iter() {
+                            if let Ok(mut stream) = stream.lock() {
+                                if let Err(e) = send_clipboard_message(&mut *stream, &msg) {
+                                    eprintln!("Failed to send clipboard: {}", e);
+                                } else {
+                                    println!("Sent clipboard content: {} bytes", msg.content.len());
+                                }
+                            }
+                        }
+                    }
+                    
+                    prev_count = state.changecount;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+fn handle_connection(stream: TcpStream, addr: std::net::SocketAddr, clipboard_tx: mpsc::Sender<ClipboardCommand>, connections: ConnectionsMap) {
+    // Clone the stream for sending
+    let send_stream = match stream.try_clone() {
+        Ok(s) => Arc::new(Mutex::new(s)),
+        Err(e) => {
+            eprintln!("Failed to clone stream: {}", e);
+            return;
+        }
+    };
     
-    // For now, connect to the first peer (backward compatibility)
-    // TODO: In the future, connect to all peers
-    if let Some(peer_addr) = peer_addrs.first() {
-        loop {
-            println!("Attempting to connect to {}", peer_addr);
-            
-            match TcpStream::connect(peer_addr) {
-                Ok(stream) => {
-                    println!("Connected to {}", peer_addr);
-                
-                let stream_arc = Arc::new(Mutex::new(stream.try_clone()?));
-                
-                // Create channels for clipboard communication
-                let (clipboard_tx, clipboard_rx) = mpsc::channel();
-                let (state_tx, state_rx) = mpsc::channel();
-                
-                // Spawn clipboard manager thread (handles all clipboard operations)
-                let clipboard_thread = thread::spawn(move || {
-                    clipboard_manager(clipboard_rx, state_tx);
-                });
-                
-                // Spawn monitor thread
-                let monitor_thread = thread::spawn(move || {
-                    monitor_clipboard(stream_arc, state_rx);
-                });
-                
-                // Handle incoming messages
-                handle_incoming_messages(stream, clipboard_tx);
-                
-                println!("Disconnected from server");
-                monitor_thread.join().ok();
-                clipboard_thread.join().ok();
-            }
-            Err(e) => {
-                eprintln!("Failed to connect: {}", e);
-            }
+    // Add to connections list
+    connections.lock().unwrap().push(send_stream.clone());
+    
+    // Handle incoming messages
+    let result = handle_incoming_messages(stream, |msg| {
+        println!("Received clipboard content from {}: {} bytes", addr, msg.content.len());
+        if let Err(e) = clipboard_tx.send(ClipboardCommand::SetText(msg.content)) {
+            eprintln!("Failed to send clipboard command: {}", e);
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
         }
-        
-            thread::sleep(Duration::from_secs(5));
-            println!("Reconnecting...");
-        }
-    } else {
-        eprintln!("No peers configured. Please set CURSEDBOARD_HOST or configure peers in config file.");
+        Ok(())
+    });
+    
+    if let Err(e) = result {
+        eprintln!("Connection error from {}: {}", addr, e);
     }
     
-    Ok(())
+    // Remove from connections list
+    connections.lock().unwrap().retain(|s| !Arc::ptr_eq(s, &send_stream));
+}
+
+fn main() -> Result<(), error::AppError> {
+    // Load configuration
+    let config = Config::load_layered()
+        .or_else(|_| Config::from_env())
+        .map_err(|e| error::AppError::ConfigError(e.to_string()))?;
+    
+    let bind_addr = config.bind_addr();
+    let peer_addrs = config.peer_addrs();
+    
+    // Create network manager
+    let network = NetworkManager::new(bind_addr, peer_addrs);
+    
+    // Create shared connections list
+    let connections: ConnectionsMap = Arc::new(Mutex::new(Vec::new()));
+    
+    // Create clipboard communication channels
+    let (clipboard_tx, clipboard_rx) = mpsc::channel();
+    let (state_tx, state_rx) = mpsc::channel();
+    
+    // Spawn clipboard manager thread
+    thread::spawn(move || {
+        clipboard_manager(clipboard_rx, state_tx);
+    });
+    
+    // Spawn clipboard monitor thread
+    let connections_clone = connections.clone();
+    thread::spawn(move || {
+        monitor_clipboard_changes(state_rx, connections_clone);
+    });
+    
+    // Start listening for incoming connections
+    let clipboard_tx_clone = clipboard_tx.clone();
+    let connections_clone = connections.clone();
+    network.start_listener(move |stream, addr| {
+        handle_connection(stream, addr, clipboard_tx_clone.clone(), connections_clone.clone());
+    })?;
+    
+    // Start connecting to peers
+    let clipboard_tx_clone = clipboard_tx.clone();
+    let connections_clone = connections.clone();
+    network.start_peer_connections(move |stream, addr| {
+        handle_connection(stream, addr, clipboard_tx_clone.clone(), connections_clone.clone());
+    });
+    
+    // Keep main thread alive
+    loop {
+        thread::sleep(Duration::from_secs(60));
+        let conn_count = connections.lock().unwrap().len();
+        println!("Active connections: {}", conn_count);
+    }
 }
