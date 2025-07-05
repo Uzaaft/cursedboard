@@ -1,5 +1,6 @@
 pub mod config;
 pub mod simple_config_loader;
+pub mod network;
 mod duration_serde;
 
 use serde::{Deserialize, Serialize};
