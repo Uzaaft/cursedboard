@@ -1,0 +1,65 @@
+# Multi-peer configuration example
+# This shows how to sync between multiple machines
+
+[network]
+bind_addr = "0.0.0.0"  # Listen for incoming connections
+port = 34254
+connection_timeout = "10s"
+
+# Define multiple peers
+[[network.peers]]
+host = "192.168.1.100"
+name = "macbook"
+
+[[network.peers]]
+host = "192.168.1.101"
+name = "linux-desktop"
+
+[[network.peers]]
+host = "192.168.1.102"
+name = "work-laptop"
+
+[network.reconnect]
+enabled = true
+initial_delay = "1s"
+max_delay = "30s"
+
+[clipboard]
+check_interval = "500ms"
+max_size = 10485760
+text_only = true
+ignore_empty = true
+bidirectional = true
+
+[logging]
+level = "info"
+format = "pretty"
+
+# P2P-specific configuration
+[p2p]
+device_name = "my-laptop"
+
+[p2p.discovery]
+mdns = true  # Enable mDNS/Bonjour discovery
+manual = true  # Also support manual peer configuration
+timeout = "30s"
+
+# Manual peer list (used when mdns fails or is disabled)
+[[p2p.discovery.peers]]
+host = "192.168.1.100"
+port = 34254
+
+[[p2p.discovery.peers]]
+host = "192.168.1.101"
+port = 34254
+
+# Peer access control
+[p2p]
+allowed_peers = ["trusted-desktop", "work-laptop"]
+# blocked_peers = ["untrusted-device"]
+
+[p2p.encryption]
+enabled = true
+method = "chacha20-poly1305"
+# public_key_path = "~/.config/cursedboard/keys/public.pem"
+# private_key_path = "~/.config/cursedboard/keys/private.pem"
