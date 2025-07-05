@@ -145,15 +145,22 @@ fn clipboard_manager(clipboard_tx: mpsc::Receiver<ClipboardCommand>, state_tx: m
 }
 
 fn main() -> Result<(), error::AppError> {
-    let config = Config::from_env().map_err(|e| error::AppError::ConfigError(e))?;
-    let addr = config.remote_addr;
+    // Load configuration with layered approach (files + env vars)
+    let config = Config::load_layered()
+        .or_else(|_| Config::from_env()) // Fallback to env-only for backward compatibility
+        .map_err(|e| error::AppError::ConfigError(e.to_string()))?;
     
-    loop {
-        println!("Attempting to connect to {}", addr);
-        
-        match TcpStream::connect(addr) {
-            Ok(stream) => {
-                println!("Connected to {}", addr);
+    let peer_addrs = config.peer_addrs();
+    
+    // For now, connect to the first peer (backward compatibility)
+    // TODO: In the future, connect to all peers
+    if let Some(peer_addr) = peer_addrs.first() {
+        loop {
+            println!("Attempting to connect to {}", peer_addr);
+            
+            match TcpStream::connect(peer_addr) {
+                Ok(stream) => {
+                    println!("Connected to {}", peer_addr);
                 
                 let stream_arc = Arc::new(Mutex::new(stream.try_clone()?));
                 
@@ -183,7 +190,12 @@ fn main() -> Result<(), error::AppError> {
             }
         }
         
-        thread::sleep(Duration::from_secs(5));
-        println!("Reconnecting...");
+            thread::sleep(Duration::from_secs(5));
+            println!("Reconnecting...");
+        }
+    } else {
+        eprintln!("No peers configured. Please set CURSEDBOARD_HOST or configure peers in config file.");
     }
+    
+    Ok(())
 }
