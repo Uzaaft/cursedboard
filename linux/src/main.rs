@@ -96,7 +96,12 @@ fn handle_client(stream: TcpStream, address: std::net::SocketAddr) {
 }
 
 fn main() -> std::io::Result<()> {
-    let bind_addr = Config::server_bind_addr();
+    // Load configuration with layered approach (files + env vars)
+    let config = Config::load_layered()
+        .or_else(|_| Ok(Config::default())) // Fallback to default
+        .map_err(|e: shared::config::ConfigError| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    
+    let bind_addr = config.bind_addr();
     let listener = TcpListener::bind(bind_addr)?;
     let addr = listener.local_addr()?;
     
