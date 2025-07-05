@@ -1,122 +1,118 @@
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use std::{net::TcpStream, sync::{Arc, Mutex}, thread, time::Duration};
 
 use arboard::Clipboard;
-use shared::{ClipboardMessage, decode_message_length, encode_message, config::Config};
+use shared::{ClipboardMessage, config::Config, network::{NetworkManager, handle_incoming_messages, send_clipboard_message}};
 
-fn handle_incoming_messages(mut stream: TcpStream, clipboard: Arc<Mutex<Clipboard>>) {
-    let mut message_length = [0u8; 8];
-    
-    loop {
-        match stream.read_exact(&mut message_length) {
-            Ok(_) => {
-                let length = decode_message_length(&message_length) as usize;
-                let mut buffer = vec![0u8; length];
-                
-                match stream.read_exact(&mut buffer) {
-                    Ok(_) => {
-                        match ClipboardMessage::from_bytes(&buffer) {
-                            Ok(msg) => {
-                                println!("Received clipboard content: {} bytes", msg.content.len());
-                                
-                                if let Ok(mut cb) = clipboard.lock() {
-                                    if let Err(e) = cb.set_text(&msg.content) {
-                                        eprintln!("Failed to set clipboard: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => eprintln!("Failed to decode message: {}", e),
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to read message data: {}", e);
-                        break;
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to read message length: {}", e);
-                break;
-            }
-        }
-    }
-}
+/// Global connections map for broadcasting clipboard changes
+type ConnectionsMap = Arc<Mutex<Vec<Arc<Mutex<TcpStream>>>>>;
 
-fn monitor_clipboard(stream: Arc<Mutex<TcpStream>>, clipboard: Arc<Mutex<Clipboard>>) {
+fn monitor_clipboard_changes(connections: ConnectionsMap) {
+    let mut clipboard = Clipboard::new().expect("Failed to initialize clipboard");
     let mut last_content = String::new();
     
     loop {
-        thread::sleep(Duration::from_millis(500));
-        
-        if let Ok(mut cb) = clipboard.lock() {
-            match cb.get_text() {
-                Ok(content) => {
-                    if content != last_content && !content.is_empty() {
-                        last_content = content.clone();
-                        
-                        let msg = ClipboardMessage::new(content);
-                        match encode_message(&msg) {
-                            Ok(data) => {
-                                if let Ok(mut stream) = stream.lock() {
-                                    if let Err(e) = stream.write_all(&data) {
-                                        eprintln!("Failed to send clipboard: {}", e);
-                                    } else {
-                                        println!("Sent clipboard content: {} bytes", msg.content.len());
-                                    }
-                                }
-                            }
-                            Err(e) => eprintln!("Failed to encode message: {}", e),
+        if let Ok(current) = clipboard.get_text() {
+            if current != last_content && !current.is_empty() {
+                let msg = ClipboardMessage::new(current.clone());
+                
+                // Broadcast to all connected peers
+                let conns = connections.lock().unwrap();
+                for stream in conns.iter() {
+                    if let Ok(mut stream) = stream.lock() {
+                        if let Err(e) = send_clipboard_message(&mut *stream, &msg) {
+                            eprintln!("Failed to send clipboard: {}", e);
+                        } else {
+                            println!("Sent clipboard content: {} bytes", msg.content.len());
                         }
                     }
                 }
-                Err(e) => eprintln!("Failed to get clipboard: {}", e),
+                
+                last_content = current;
             }
         }
+        
+        thread::sleep(Duration::from_millis(500));
     }
 }
 
-fn handle_client(stream: TcpStream, address: std::net::SocketAddr) {
-    println!("Connection received from {}!", address);
+fn handle_connection(stream: TcpStream, addr: std::net::SocketAddr, clipboard: Arc<Mutex<Clipboard>>, connections: ConnectionsMap) {
+    // Clone the stream for sending
+    let send_stream = match stream.try_clone() {
+        Ok(s) => Arc::new(Mutex::new(s)),
+        Err(e) => {
+            eprintln!("Failed to clone stream: {}", e);
+            return;
+        }
+    };
     
-    let clipboard = Arc::new(Mutex::new(Clipboard::new().expect("Failed to create clipboard")));
-    let stream_arc = Arc::new(Mutex::new(stream.try_clone().expect("Failed to clone stream")));
+    // Add to connections list
+    connections.lock().unwrap().push(send_stream.clone());
     
-    let clipboard_clone = clipboard.clone();
-    let monitor_thread = thread::spawn(move || {
-        monitor_clipboard(stream_arc, clipboard_clone);
+    // Handle incoming messages
+    let result = handle_incoming_messages(stream, |msg| {
+        println!("Received clipboard content from {}: {} bytes", addr, msg.content.len());
+        
+        if let Ok(mut clipboard) = clipboard.lock() {
+            if let Err(e) = clipboard.set_text(msg.content) {
+                eprintln!("Failed to set clipboard: {}", e);
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+            }
+        }
+        Ok(())
     });
     
-    handle_incoming_messages(stream, clipboard);
+    if let Err(e) = result {
+        eprintln!("Connection error from {}: {}", addr, e);
+    }
     
-    println!("Client {} disconnected", address);
-    monitor_thread.join().ok();
+    // Remove from connections list
+    connections.lock().unwrap().retain(|s| !Arc::ptr_eq(s, &send_stream));
 }
 
 fn main() -> std::io::Result<()> {
-    // Load configuration with layered approach (files + env vars)
+    // Load configuration
     let config = Config::load_layered()
-        .or_else(|_| Ok(Config::default())) // Fallback to default
+        .or_else(|_| Ok(Config::default()))
         .map_err(|e: shared::config::ConfigError| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
     
     let bind_addr = config.bind_addr();
-    let listener = TcpListener::bind(bind_addr)?;
-    let addr = listener.local_addr()?;
+    let peer_addrs = config.peer_addrs();
     
-    println!("Listening on {}", addr);
+    // Create network manager
+    let network = NetworkManager::new(bind_addr, peer_addrs);
     
+    // Create shared clipboard
+    let clipboard = Arc::new(Mutex::new(
+        Clipboard::new().expect("Failed to initialize clipboard")
+    ));
+    
+    // Create shared connections list
+    let connections: ConnectionsMap = Arc::new(Mutex::new(Vec::new()));
+    
+    // Spawn clipboard monitor thread
+    let connections_clone = connections.clone();
+    thread::spawn(move || {
+        monitor_clipboard_changes(connections_clone);
+    });
+    
+    // Start listening for incoming connections
+    let clipboard_clone = clipboard.clone();
+    let connections_clone = connections.clone();
+    network.start_listener(move |stream, addr| {
+        handle_connection(stream, addr, clipboard_clone.clone(), connections_clone.clone());
+    })?;
+    
+    // Start connecting to peers
+    let clipboard_clone = clipboard.clone();
+    let connections_clone = connections.clone();
+    network.start_peer_connections(move |stream, addr| {
+        handle_connection(stream, addr, clipboard_clone.clone(), connections_clone.clone());
+    });
+    
+    // Keep main thread alive
     loop {
-        match listener.accept() {
-            Ok((stream, address)) => {
-                thread::spawn(move || {
-                    handle_client(stream, address);
-                });
-            }
-            Err(e) => {
-                eprintln!("Failed to accept connection: {}", e);
-            }
-        }
+        thread::sleep(Duration::from_secs(60));
+        let conn_count = connections.lock().unwrap().len();
+        println!("Active connections: {}", conn_count);
     }
 }
