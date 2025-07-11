@@ -5,6 +5,6 @@ edition.workspace = true
 
 [dependencies]
 shared = { path = "../shared" }
-arboard = "3.4"
+arboard = "3"
 serde = { workspace = true }
 bincode = { workspace = true }
