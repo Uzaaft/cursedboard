@@ -2,7 +2,8 @@
 pub enum AppError{
     IOError(std::io::Error),
     ConfigError(String),
-    NumError(std::num::TryFromIntError)
+    NumError(std::num::TryFromIntError),
+    SystemError(String)
 }
 
 impl std::fmt::Display for AppError {
@@ -11,6 +12,7 @@ impl std::fmt::Display for AppError {
             AppError::IOError(error) => write!(f, "IOError: {error}"),
             AppError::ConfigError(s) => write!(f, "Config error: {s}"),
             AppError::NumError(s) => write!(f, "Numeric error: {s}"),
+            AppError::SystemError(s) => write!(f, "System error: {s}"),
         }
     }
 }
