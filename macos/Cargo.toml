@@ -13,3 +13,5 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 objc2-foundation = { version = "0.3", features = ["NSString"] }
 serde = { workspace = true }
 bincode = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

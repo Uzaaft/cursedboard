@@ -13,4 +13,6 @@ bincode = "1"
 toml = "0.9"
 regex = "1.10"
 dirs = "6"
+log = "0.4"
+env_logger = "0.11"
 

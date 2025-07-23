@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use log::{debug, error, info};
+
 use crate::{decode_message_length, encode_message, ClipboardMessage};
 
 /// Connection information
@@ -40,7 +42,7 @@ impl NetworkManager {
         let listener = TcpListener::bind(self.bind_addr)?;
         let connections = self.connections.clone();
 
-        println!("Listening on {}", listener.local_addr()?);
+        info!("Listening on {}", listener.local_addr()?);
 
         thread::spawn(move || {
             loop {
@@ -53,7 +55,7 @@ impl NetworkManager {
                         };
 
                         if should_accept {
-                            println!("Accepted connection from {addr}");
+                            info!("Accepted connection from {addr}");
                             connections.lock().unwrap().insert(
                                 addr,
                                 ConnectionInfo {
@@ -68,13 +70,13 @@ impl NetworkManager {
                                 handler(stream, addr);
                                 // Remove connection when done
                                 connections.lock().unwrap().remove(&addr);
-                                println!("Connection from {addr} closed");
+                                info!("Connection from {addr} closed");
                             });
                         } else {
-                            println!("Rejecting duplicate connection from {addr}");
+                            debug!("Rejecting duplicate connection from {addr}");
                         }
                     }
-                    Err(e) => eprintln!("Failed to accept connection: {e}"),
+                    Err(e) => error!("Failed to accept connection: {e}"),
                 }
             }
         });
@@ -102,10 +104,10 @@ impl NetworkManager {
                     };
 
                     if should_connect {
-                        println!("Attempting to connect to {peer_addr}");
+                        debug!("Attempting to connect to {peer_addr}");
                         match TcpStream::connect(peer_addr) {
                             Ok(stream) => {
-                                println!("Connected to {peer_addr}");
+                                info!("Connected to {peer_addr}");
                                 connections.lock().unwrap().insert(
                                     peer_addr,
                                     ConnectionInfo {
@@ -118,10 +120,10 @@ impl NetworkManager {
 
                                 // Remove connection when done
                                 connections.lock().unwrap().remove(&peer_addr);
-                                println!("Disconnected from {peer_addr}");
+                                info!("Disconnected from {peer_addr}");
                             }
                             Err(e) => {
-                                eprintln!("Failed to connect to {peer_addr}: {e}");
+                                error!("Failed to connect to {peer_addr}: {e}");
                             }
                         }
                     }
@@ -159,10 +161,10 @@ where
                         Ok(msg) => {
                             message_handler(msg)?;
                         }
-                        Err(e) => eprintln!("Failed to decode message: {e}"),
+                        Err(e) => error!("Failed to decode message: {e}"),
                     },
                     Err(e) => {
-                        eprintln!("Failed to read message: {e}");
+                        error!("Failed to read message: {e}");
                         return Err(e);
                     }
                 }

@@ -7,6 +7,8 @@ use std::{
     time::Duration,
 };
 
+use log::{debug, info};
+
 use clipboard_provider::LinuxClipboardProvider;
 use shared::{
     clipboard::{spawn_clipboard_manager, ClipboardEvent, ConnectionHandler},
@@ -15,6 +17,9 @@ use shared::{
 };
 
 fn main() -> std::io::Result<()> {
+    // Initialize logger
+    env_logger::init();
+
     // Load configuration
     let config = Config::load_layered()
         .or_else(|_| Ok(Config::default()))
@@ -47,13 +52,13 @@ fn main() -> std::io::Result<()> {
     thread::spawn(move || loop {
         match event_rx.recv() {
             Ok(ClipboardEvent::LocalChange(content)) => {
-                println!("Local clipboard changed: {} bytes", content.len());
+                info!("Local clipboard changed: {} bytes", content.len());
             }
             Ok(ClipboardEvent::RemoteChange(content)) => {
-                println!("Remote clipboard update: {} bytes", content.len());
+                info!("Remote clipboard update: {} bytes", content.len());
             }
             Ok(ClipboardEvent::Shutdown) => {
-                println!("Clipboard manager shutting down");
+                info!("Clipboard manager shutting down");
                 break;
             }
             Err(_) => break,
@@ -76,6 +81,6 @@ fn main() -> std::io::Result<()> {
     loop {
         thread::sleep(Duration::from_secs(60));
         let conn_count = connections.lock().unwrap().len();
-        println!("Active connections: {}", conn_count);
+        debug!("Active connections: {}", conn_count);
     }
 }

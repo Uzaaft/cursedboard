@@ -9,6 +9,8 @@ use std::{
     time::Duration,
 };
 
+use log::{debug, info};
+
 use clipboard_provider::MacOSClipboardProvider;
 use shared::{
     clipboard::{spawn_clipboard_manager, ClipboardEvent, ConnectionHandler},
@@ -17,6 +19,9 @@ use shared::{
 };
 
 fn main() -> Result<(), error::AppError> {
+    // Initialize logger
+    env_logger::init();
+
     // Load configuration
     let config = Config::load_layered()
         .or_else(|_| Config::from_env())
@@ -46,13 +51,13 @@ fn main() -> Result<(), error::AppError> {
     thread::spawn(move || loop {
         match event_rx.recv() {
             Ok(ClipboardEvent::LocalChange(content)) => {
-                println!("Local clipboard changed: {} bytes", content.len());
+                info!("Local clipboard changed: {} bytes", content.len());
             }
             Ok(ClipboardEvent::RemoteChange(content)) => {
-                println!("Remote clipboard update: {} bytes", content.len());
+                info!("Remote clipboard update: {} bytes", content.len());
             }
             Ok(ClipboardEvent::Shutdown) => {
-                println!("Clipboard manager shutting down");
+                info!("Clipboard manager shutting down");
                 break;
             }
             Err(_) => break,
@@ -75,6 +80,6 @@ fn main() -> Result<(), error::AppError> {
     loop {
         thread::sleep(Duration::from_secs(60));
         let conn_count = connections.lock().unwrap().len();
-        println!("Active connections: {conn_count}");
+        debug!("Active connections: {conn_count}");
     }
 }

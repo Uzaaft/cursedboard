@@ -5,6 +5,8 @@ use std::{
     time::Duration,
 };
 
+use log::{debug, error, info};
+
 use crate::{network::send_clipboard_message, ClipboardMessage};
 
 /// Platform-specific clipboard operations
@@ -67,7 +69,7 @@ impl ClipboardManager {
             match self.update_rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(content) => {
                     if let Err(e) = self.provider.set_text(content.clone()) {
-                        eprintln!("Failed to set clipboard: {e}");
+                        error!("Failed to set clipboard: {e}");
                     } else {
                         // Notify monitor thread of remote change
                         let _ = self.monitor_tx.send(ClipboardEvent::RemoteChange(content));
@@ -98,9 +100,9 @@ impl ClipboardManager {
         for stream in conns.iter() {
             if let Ok(mut stream) = stream.lock() {
                 if let Err(e) = send_clipboard_message(&mut stream, &msg) {
-                    eprintln!("Failed to send clipboard: {e}");
+                    error!("Failed to send clipboard: {e}");
                 } else {
-                    println!("Sent clipboard content: {} bytes", msg.content.len());
+                    debug!("Sent clipboard content: {} bytes", msg.content.len());
                 }
             }
         }
@@ -131,7 +133,7 @@ impl ConnectionHandler {
         let send_stream = match stream.try_clone() {
             Ok(s) => Arc::new(Mutex::new(s)),
             Err(e) => {
-                eprintln!("Failed to clone stream: {e}");
+                error!("Failed to clone stream: {e}");
                 return;
             }
         };
@@ -142,20 +144,20 @@ impl ConnectionHandler {
         // Handle incoming messages
         let clipboard_tx = self.clipboard_tx.clone();
         let result = handle_incoming_messages(stream, move |msg| {
-            println!(
+            debug!(
                 "Received clipboard content from {}: {} bytes",
                 addr,
                 msg.content.len()
             );
             if let Err(e) = clipboard_tx.send(msg.content) {
-                eprintln!("Failed to send clipboard update: {e}");
+                error!("Failed to send clipboard update: {e}");
                 return Err(std::io::Error::other(e));
             }
             Ok(())
         });
 
         if let Err(e) = result {
-            eprintln!("Connection error from {addr}: {e}");
+            error!("Connection error from {addr}: {e}");
         }
 
         // Remove from connections list
