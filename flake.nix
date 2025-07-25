@@ -4,8 +4,6 @@
     flake-utils.url = "github:numtide/flake-utils";
     # Rust overlay
     rust-overlay.url = "github:oxalica/rust-overlay";
-    # Zig overlay
-    zig.url = "github:mitchellh/zig-overlay";
   };
 
   outputs = inputs @ {
@@ -13,7 +11,6 @@
     nixpkgs,
     flake-utils,
     rust-overlay,
-    zig,
     ...
   }:
     flake-utils.lib.eachSystem [
@@ -30,16 +27,25 @@
         cargo = rustVersion;
         rustc = rustVersion;
       };
-      appRustBuild = rustPlatform.buildRustPackage {
+      appRustBuildMacOS = rustPlatform.buildRustPackage {
         pname = "macos";
-        version = "0.1.0";
-        src = ./macos;
-        cargoLock.lockFile = ./macos/Cargo.lock;
+        version = "0.1";
+        src = ./.;
+        cargoLock.lockFile = ./Cargo.lock;
+        buildAndTestSubdir = "macos";
+      };
+      appRustBuildLinux = rustPlatform.buildRustPackage {
+        pname = "linux";
+        version = "0.1";
+        src = ./.;
+        cargoLock.lockFile = ./Cargo.lock;
+        buildAndTestSubdir = "linux";
       };
     in {
       # For `nix build` & `nix run`:
       packages = {
-        macos = appRustBuild;
+        macos = appRustBuildMacOS;
+        linux = appRustBuildLinux;
 
         # default = appRustBuild;
 
@@ -48,14 +54,12 @@
 
       devShell = pkgs.mkShell {
         packages = [
-          zig.packages.${system}."0.14.0"
           pkgs.rust-bin.stable.latest.default
           pkgs.zls
         ];
 
         buildInputs = with pkgs; [
           rust-bin.stable.latest.default
-          zig.packages.${system}."0.14.0"
         ];
       };
     });
