@@ -207,25 +207,35 @@ pub struct WaylandConfig {
     pub force_wayland: bool,
 }
 
-/// Peer-to-peer configuration (future)
+/// Peer-to-peer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct P2PConfig {
     /// Discovery method
     pub discovery: DiscoveryConfig,
 
     /// Encryption settings
-    pub encryption: EncryptionConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encryption: Option<EncryptionConfig>,
 
     /// Device name/identifier
     pub device_name: String,
 
-    /// Allowed peers (whitelist)
+    /// Allowed peers (whitelist) - managed automatically
     #[serde(default)]
     pub allowed_peers: Vec<String>,
 
     /// Blocked peers (blacklist)
     #[serde(default)]
     pub blocked_peers: Vec<String>,
+
+    /// Group name for peer filtering (defaults to username)
+    pub group: Option<String>,
+
+    /// Pairing mode timeout (in seconds) - accept first new peer
+    pub pair_timeout: Option<u64>,
+
+    /// Pre-shared key for authentication
+    pub psk: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,6 +253,37 @@ pub struct DiscoveryConfig {
     /// Discovery timeout
     #[serde(with = "crate::duration_serde")]
     pub timeout: Duration,
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            mdns: true,
+            manual: true,
+            peers: Vec::new(),
+            timeout: Duration::from_secs(2),
+        }
+    }
+}
+
+impl Default for P2PConfig {
+    fn default() -> Self {
+        let device_name = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "cursedboard".to_string());
+
+        Self {
+            discovery: DiscoveryConfig::default(),
+            encryption: None,
+            device_name,
+            allowed_peers: Vec::new(),
+            blocked_peers: Vec::new(),
+            group: None,
+            pair_timeout: None,
+            psk: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
