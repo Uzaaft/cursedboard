@@ -2,84 +2,113 @@ mod clipboard_provider;
 mod config;
 mod error;
 
-use std::{
-    net::TcpStream,
-    sync::{Arc, Mutex},
-    thread,
-    time::Duration,
-};
-
-use log::{debug, info};
-
 use clipboard_provider::MacOSClipboardProvider;
+use log::{debug, error, info};
 use shared::{
-    clipboard::{spawn_clipboard_manager, ClipboardEvent, ConnectionHandler},
-    config::Config,
-    network::NetworkManager,
+    cli::Cli,
+    connection::ConnectionManager,
+    discovery::DiscoveryManager,
+    instance::Instance,
+    protocol::{encode_message, ClipboardUpdateMessage, Message},
 };
+use std::time::Duration;
+use tokio::net::TcpListener;
 
-fn main() -> Result<(), error::AppError> {
-    // Initialize logger
-    env_logger::init();
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse_args();
 
-    // Load configuration
-    let config = Config::load_layered()
-        .or_else(|_| Config::from_env())
-        .map_err(|e| error::AppError::ConfigError(e.to_string()))?;
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
+        cli.log_level.as_deref().unwrap_or("info"),
+    ))
+    .init();
 
-    let bind_addr = config.bind_addr();
-    let peer_addrs = config.peer_addrs();
+    info!("Starting cursedboard (macOS)");
 
-    // Create network manager
-    let network = NetworkManager::new(bind_addr, peer_addrs);
+    let mut instance = Instance::load_or_create()?;
+    if let Some(group) = cli.group.clone() {
+        instance.group = Some(group);
+    }
 
-    // Create shared connections list
-    let connections: Arc<Mutex<Vec<Arc<Mutex<TcpStream>>>>> = Arc::new(Mutex::new(Vec::new()));
+    let port = cli.port;
+    let bind_addr = format!("0.0.0.0:{}", port);
+    let listener = TcpListener::bind(&bind_addr).await?;
+    info!("Listening on {}", bind_addr);
 
-    // Create clipboard provider
-    let provider = Box::new(
-        MacOSClipboardProvider::new().map_err(|e| error::AppError::SystemError(e.to_string()))?,
-    );
+    let connection_manager = ConnectionManager::new(instance.clone(), cli.psk.clone());
 
-    // Spawn clipboard manager
-    let (clipboard_tx, event_rx) = spawn_clipboard_manager(provider, connections.clone());
+    if let Some(pair_seconds) = cli.pair {
+        connection_manager.enable_pairing(Duration::from_secs(pair_seconds));
+    }
 
-    // Create connection handler
-    let conn_handler = Arc::new(ConnectionHandler::new(clipboard_tx, connections.clone()));
+    connection_manager.accept_connections(listener).await?;
 
-    // Spawn event monitor thread (for logging/debugging)
-    thread::spawn(move || loop {
-        match event_rx.recv() {
-            Ok(ClipboardEvent::LocalChange(content)) => {
-                info!("Local clipboard changed: {} bytes", content.len());
+    if !cli.no_discovery {
+        let mut discovery = DiscoveryManager::new(
+            instance.id,
+            instance.device_name.clone(),
+            port,
+            instance.get_group(),
+        )?;
+
+        info!("mDNS discovery enabled");
+
+        let conn_mgr_clone = connection_manager.clone();
+        tokio::spawn(async move {
+            while let Some(peer) = discovery.next_peer().await {
+                conn_mgr_clone.handle_discovered_peer(peer).await;
             }
-            Ok(ClipboardEvent::RemoteChange(content)) => {
-                info!("Remote clipboard update: {} bytes", content.len());
+        });
+    } else {
+        info!("Discovery disabled via --no-discovery");
+    }
+
+    use shared::clipboard::ClipboardProvider;
+
+    let mut provider = MacOSClipboardProvider::new()?;
+
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+    // Spawn clipboard monitor task
+    tokio::task::spawn_blocking(move || {
+        let mut provider_monitor = MacOSClipboardProvider::new().unwrap();
+        let mut last_content: Option<String> = None;
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+
+            match provider_monitor.get_text() {
+                Ok(content) => {
+                    if last_content.as_ref() != Some(&content) && !content.is_empty() {
+                        debug!("Local clipboard changed: {} bytes", content.len());
+                        last_content = Some(content.clone());
+
+                        let msg = Message::ClipboardUpdate(ClipboardUpdateMessage::new(content));
+                        if let Ok(encoded) = encode_message(&msg) {
+                            let _ = outbound_tx.send(encoded);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Error reading clipboard: {}", e);
+                }
             }
-            Ok(ClipboardEvent::Shutdown) => {
-                info!("Clipboard manager shutting down");
-                break;
-            }
-            Err(_) => break,
         }
     });
 
-    // Start listening for incoming connections
-    let handler_clone = conn_handler.clone();
-    network.start_listener(move |stream, addr| {
-        handler_clone.handle_connection(stream, addr);
-    })?;
-
-    // Start connecting to peers
-    let handler_clone = conn_handler.clone();
-    network.start_peer_connections(move |stream, addr| {
-        handler_clone.handle_connection(stream, addr);
-    });
-
-    // Keep main thread alive with periodic status updates
+    // Handle both incoming clipboard updates and outgoing ones
     loop {
-        thread::sleep(Duration::from_secs(60));
-        let conn_count = connections.lock().unwrap().len();
-        debug!("Active connections: {conn_count}");
+        tokio::select! {
+            Some(content) = connection_manager.next_clipboard_update() => {
+                debug!("Received clipboard update: {} bytes", content.len());
+                if let Err(e) = provider.set_text(content) {
+                    error!("Failed to set clipboard: {}", e);
+                }
+            }
+            Some(_encoded) = outbound_rx.recv() => {
+                // TODO: Broadcast to connected peers
+                // For now, we'd need to add a method to ConnectionManager to send data
+                debug!("Local clipboard change, ready to broadcast");
+            }
+        }
     }
 }
