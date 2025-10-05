@@ -10,6 +10,11 @@ toml = { workspace = true }
 regex = { workspace = true }
 dirs = { workspace = true }
 log = { workspace = true }
+uuid = { workspace = true }
+mdns-sd = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+hostname = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
