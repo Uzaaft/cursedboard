@@ -1,7 +1,12 @@
 pub mod clipboard;
+pub mod cli;
 pub mod config;
+pub mod connection;
+pub mod discovery;
 mod duration_serde;
+pub mod instance;
 pub mod network;
+pub mod protocol;
 pub mod simple_config_loader;
 
 use serde::{Deserialize, Serialize};
