@@ -69,6 +69,29 @@ CURSEDBOARD_PSK=mysecret cursedboard
 - New peers are trusted on first successful connection
 - Trusted peers are persisted in `~/.config/cursedboard/trusted.toml`
 
+## NixOS Module
+
+```nix
+{
+  inputs.cursedboard.url = "github:uzaaft/cursedboard";
+
+  outputs = { self, nixpkgs, cursedboard }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        cursedboard.nixosModules.default
+        {
+          services.cursedboard = {
+            enable = true;
+            user = "myuser";
+            pskFile = "/run/secrets/cursedboard-psk";
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
 ## License
 
 MIT

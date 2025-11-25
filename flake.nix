@@ -59,5 +59,7 @@
           pkgs.apple-sdk_15
         ];
       };
-    });
+    }) // {
+      nixosModules.default = import ./nix/module.nix;
+    };
 }
