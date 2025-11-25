@@ -117,7 +117,7 @@ mod tests {
             content: "hello".into(),
             timestamp: 12345,
         };
-        let encoded = msg.encode().unwrap();
+        let encoded = msg.encode();
         let decoded = Message::decode(&encoded).unwrap();
         match decoded {
             Message::Clipboard { content, timestamp } => {
