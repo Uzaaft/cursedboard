@@ -3,4 +3,4 @@
 **/.zig-cache
 **/zig-out/bin
 **/result
-README.md
+*.md
