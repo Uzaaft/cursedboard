@@ -1,7 +1,6 @@
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashSet;
-use std::net::SocketAddr;
-
+use std::net::{IpAddr, SocketAddr};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -45,16 +44,32 @@ impl Discovery {
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
 
+        let local_ips: Vec<IpAddr> = local_ip_address::list_afinet_netifas()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(_, ip)| {
+                if ip.is_loopback() {
+                    return None;
+                }
+                match ip {
+                    IpAddr::V4(_) => Some(ip),
+                    IpAddr::V6(v6) if !v6.is_loopback() && !is_link_local_v6(&v6) => Some(ip),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        info!(?local_ips, "discovered local IPs");
+
         let service_name = format!("{}_{}", self.name, self.instance_id);
         let service = ServiceInfo::new(
             SERVICE_TYPE,
             &service_name,
             &format!("{}.local.", host),
-            (),
+            local_ips.as_slice(),
             self.port,
             [("id", self.instance_id.to_string().as_str())].as_slice(),
-        )?
-        .enable_addr_auto();
+        )?;
 
         self.daemon.register(service)?;
         info!(name = %self.name, port = %self.port, "registered mDNS service");
@@ -124,4 +139,8 @@ impl Discovery {
         self.daemon.shutdown()?;
         Ok(())
     }
+}
+
+fn is_link_local_v6(addr: &std::net::Ipv6Addr) -> bool {
+    (addr.segments()[0] & 0xffc0) == 0xfe80
 }
