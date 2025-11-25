@@ -1,91 +1,74 @@
-# Cursedboard
+# cursedboard
 
-Zero-config clipboard synchronization across macOS and Linux machines.
+Zero-config clipboard sync across devices via mDNS.
 
-## Quick Start
+## Features
 
-Simply run `cursedboard` on two machines on the same network:
+- **Zero-config**: devices discover each other automatically on the local network
+- **Trust-first-seen**: new peers are automatically trusted on first connection
+- **PSK authentication**: HMAC-SHA256 pre-shared key prevents unauthorized access
+- **Cross-platform**: works on macOS and Linux
+
+## Installation
+
+### Nix
 
 ```bash
-# On Machine A (macOS or Linux)
+nix run github:uzaaft/cursedboard
+```
+
+Or add to your flake:
+
+```nix
+{
+  inputs.cursedboard.url = "github:uzaaft/cursedboard";
+}
+```
+
+### Cargo
+
+```bash
+cargo install --git https://github.com/uzaaft/cursedboard
+```
+
+## Usage
+
+```bash
+# Start with defaults (name: cursedboard, port: 42069, psk: cursedboard)
 cursedboard
 
-# On Machine B (macOS or Linux)  
-cursedboard
+# Custom name and PSK
+cursedboard --name mydevice --psk mysecret
+
+# Or use environment variable for PSK
+CURSEDBOARD_PSK=mysecret cursedboard
 ```
 
-They'll automatically discover each other via mDNS and start syncing clipboards! 🎉
+### Options
 
-## How It Works
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `-n, --name` | | `cursedboard` | Device name for discovery |
+| `-p, --port` | | `42069` | TCP port for connections |
+| `--psk` | `CURSEDBOARD_PSK` | `cursedboard` | Pre-shared key for auth |
+| `--poll-ms` | | `500` | Clipboard polling interval |
 
-- **Zero Configuration**: No IP addresses, no config files needed
-- **mDNS Discovery**: Uses Bonjour (macOS) / Avahi (Linux) for automatic peer discovery
-- **First-Seen Trust**: First peer you connect to is automatically trusted
-- **Group Scoping**: Only connects to peers with matching group (username by default)
-- **Symmetric P2P**: Every instance is both client and server
+## How it works
 
-## Advanced Usage
+1. On startup, registers mDNS service `_cursedboard._tcp.local.`
+2. Browses for other cursedboard instances on the network
+3. Connects to discovered peers and authenticates with PSK
+4. Polls local clipboard for changes
+5. Broadcasts clipboard changes to all connected peers
+6. Receives clipboard changes from peers and applies them locally
 
-### Pairing Mode
+## Security
 
-Accept any new peer for 60 seconds:
+- PSK authentication uses HMAC-SHA256 challenge-response
+- Peers must share the same PSK to connect
+- New peers are trusted on first successful connection
+- Trusted peers are persisted in `~/.config/cursedboard/trusted.toml`
 
-```bash
-cursedboard --pair 60
-```
+## License
 
-### Custom Group
-
-Sync only with specific devices:
-
-```bash
-cursedboard --group my-team
-```
-
-### Pre-Shared Key
-
-Add simple authentication:
-
-```bash
-cursedboard --psk my-secret-passphrase
-```
-
-### Manual Mode (No Discovery)
-
-Disable auto-discovery:
-
-```bash
-cursedboard --no-discovery
-```
-
-### All Options
-
-```bash
-cursedboard --help
-```
-
-## Technical Details
-
-- **Port**: 34254 (TCP)
-- **Protocol**: Length-prefixed binary messages
-- **Discovery**: mDNS service `_cursedboard._tcp.local.`
-- **Security**: First-seen trust + optional PSK authentication
-- **State**: Persisted in `~/.config/cursedboard/instance.toml`
-
-## Architecture
-
-Each instance runs:
-1. **TCP Listener**: Accept incoming connections (port 34254)
-2. **mDNS Service**: Advertise and discover peers  
-3. **Clipboard Monitor**: Watch for local clipboard changes
-4. **Connection Manager**: Handle peer connections with deduplication
-
-## Building
-
-```bash
-cargo build --release
-```
-
-## Configuration File (Optional)
-
-While cursedboard works without config, you can optionally create `~/.config/cursedboard/config.toml` for advanced settings. See `examples/` directory for samples.
+MIT
