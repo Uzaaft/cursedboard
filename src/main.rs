@@ -28,7 +28,7 @@ struct Args {
     #[arg(long, env = "CURSEDBOARD_PSK", default_value = "cursedboard")]
     psk: String,
 
-    #[arg(short, long, default_value = "500")]
+    #[arg(long, default_value = "500")]
     poll_ms: u64,
 }
 
