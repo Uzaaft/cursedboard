@@ -53,7 +53,8 @@ impl Discovery {
             (),
             self.port,
             [("id", self.instance_id.to_string().as_str())].as_slice(),
-        )?;
+        )?
+        .enable_addr_auto();
 
         self.daemon.register(service)?;
         info!(name = %self.name, port = %self.port, "registered mDNS service");
