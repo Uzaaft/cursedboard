@@ -84,7 +84,7 @@ impl Discovery {
                             }
 
                             let addr = match info.get_addresses().iter().next() {
-                                Some(ip) => SocketAddr::new(*ip, info.get_port()),
+                                Some(ip) => SocketAddr::new(ip.to_ip_addr(), info.get_port()),
                                 None => continue,
                             };
 
