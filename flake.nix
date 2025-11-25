@@ -27,7 +27,6 @@
         rustc = rustVersion;
       };
       linuxBuildInputs = [
-        pkgs.xorg.libxcb
         pkgs.wayland
       ];
       cursedboard = rustPlatform.buildRustPackage {

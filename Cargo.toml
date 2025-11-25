@@ -7,7 +7,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
-arboard = "3"
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"
 hmac = "0.12"
