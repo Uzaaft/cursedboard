@@ -7,7 +7,6 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1"
-arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"
 hmac = "0.12"
@@ -21,3 +20,9 @@ toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+arboard = "3"
