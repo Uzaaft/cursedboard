@@ -26,6 +26,10 @@
         cargo = rustVersion;
         rustc = rustVersion;
       };
+      linuxBuildInputs = [
+        pkgs.xorg.libxcb
+        pkgs.wayland
+      ];
       cursedboard = rustPlatform.buildRustPackage {
         pname = "cursedboard";
         version = "0.1.0";
@@ -36,11 +40,11 @@
           pkgs.pkg-config
         ];
 
-        buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-          pkgs.xorg.libxcb
-        ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
-          pkgs.apple-sdk_15
-        ];
+        buildInputs =
+          pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux linuxBuildInputs
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+            pkgs.apple-sdk_15
+          ];
       };
     in {
       packages = {
@@ -53,11 +57,11 @@
           rustVersion
         ];
 
-        buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-          pkgs.xorg.libxcb
-        ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
-          pkgs.apple-sdk_15
-        ];
+        buildInputs =
+          pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux linuxBuildInputs
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+            pkgs.apple-sdk_15
+          ];
       };
     }) // {
       nixosModules.default = import ./nix/module.nix;
